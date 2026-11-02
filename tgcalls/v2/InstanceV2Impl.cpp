@@ -24,6 +24,7 @@
 #include "call/call.h"
 #include "api/call/audio_sink.h"
 #include "modules/audio_processing/audio_buffer.h"
+#include "modules/audio_processing/include/audio_processing.h"
 #include "absl/strings/match.h"
 #include "pc/channel.h"
 #include "audio/audio_state.h"
@@ -122,7 +123,8 @@ public:
         webrtc::LocalAudioSinkAdapter *audioSource,
         webrtc::RtpTransport *rtpTransport,
         signaling::MediaContent const &mediaContent,
-        std::shared_ptr<Threads> threads
+        std::shared_ptr<Threads> threads,
+        bool enableNoiseSuppression
     ) :
     _threads(threads),
     _ssrc(mediaContent.ssrc),
@@ -141,7 +143,7 @@ public:
             //audioOptions.residual_echo_detector = false;
         } else {
             audioOptions.echo_cancellation = true;
-            audioOptions.noise_suppression = true;
+            audioOptions.noise_suppression = enableNoiseSuppression;
         }
 
         const auto contentId = std::to_string(_ssrc);
@@ -212,6 +214,15 @@ public:
         _outgoingAudioChannel = nullptr;
     }
 
+    void setIsNoiseSuppressionEnabled(bool enabled) {
+        _threads->getWorkerThread()->BlockingCall([&]() {
+            cricket::AudioOptions options;
+            options.echo_cancellation = true;
+            options.noise_suppression = enabled;
+            _outgoingAudioChannel->send_channel()->SetAudioSend(_ssrc, !_isMuted, &options, _audioSource);
+        });
+    }
+
     void setIsMuted(bool isMuted) {
         if (_isMuted != isMuted) {
             _isMuted = isMuted;
@@ -251,6 +262,8 @@ private:
 
 private:
     std::shared_ptr<Threads> _threads;
+    rtc::scoped_refptr<webrtc::AudioProcessing> _audioProcessing;
+    bool _enableNoiseSuppression = true;
     uint32_t _ssrc = 0;
     webrtc::Call *_call = nullptr;
     ChannelManager *_channelManager = nullptr;
@@ -923,6 +936,7 @@ public:
     _createWrappedAudioDeviceModule(descriptor.createWrappedAudioDeviceModule),
     _devicesConfig(descriptor.mediaDevicesConfig),
     _statsLogPath(descriptor.config.statsLogPath),
+    _enableNoiseSuppression(descriptor.config.enableNS),
     _eventLog(std::make_unique<webrtc::RtcEventLogNull>()),
     _taskQueueFactory(webrtc::CreateDefaultTaskQueueFactory()),
     _initialInputDeviceId(std::move(descriptor.initialInputDeviceId)),
@@ -1126,7 +1140,13 @@ public:
         peerConnectionFactoryDependencies.adm = _audioDeviceModule;
 
         webrtc::AudioProcessingBuilder builder;
-        peerConnectionFactoryDependencies.audio_processing = builder.Create();
+        _audioProcessing = builder.Create();
+        if (!_enableNoiseSuppression && _audioProcessing) {
+            auto apmConfig = _audioProcessing->GetConfig();
+            apmConfig.noise_suppression.enabled = false;
+            _audioProcessing->ApplyConfig(apmConfig);
+        }
+        peerConnectionFactoryDependencies.audio_processing = _audioProcessing;
 
         _availableVideoFormats = peerConnectionFactoryDependencies.video_encoder_factory->GetSupportedFormats();
         
@@ -1377,7 +1397,8 @@ public:
                             &_audioSource,
                             _rtpTransport,
                             outgoingAudioContent.value(),
-                            _threads
+                            _threads,
+                            _enableNoiseSuppression
                         ));
                         _outgoingAudioChannel->setIsMuted(_isMicrophoneMuted);
                     }
@@ -2059,6 +2080,18 @@ public:
         });
     }
 
+    void setIsNoiseSuppressionEnabled(bool enabled) {
+        _enableNoiseSuppression = enabled;
+        if (_audioProcessing) {
+            auto config = _audioProcessing->GetConfig();
+            config.noise_suppression.enabled = enabled;
+            _audioProcessing->ApplyConfig(config);
+        }
+        if (_outgoingAudioChannel) {
+            _outgoingAudioChannel->setIsNoiseSuppressionEnabled(enabled);
+        }
+    }
+
     void setIsLowBatteryLevel(bool isLowBatteryLevel) {
         if (_isBatteryLow != isLowBatteryLevel) {
             _isBatteryLow = isLowBatteryLevel;
@@ -2331,6 +2364,12 @@ void InstanceV2Impl::setAudioInputDevice(std::string id) {
 void InstanceV2Impl::setAudioOutputDevice(std::string id) {
     _internal->perform([id](InstanceV2ImplInternal *internal) {
         internal->setAudioOutputDevice(id);
+    });
+}
+
+void InstanceV2Impl::setIsNoiseSuppressionEnabled(bool enabled) {
+    _internal->perform([enabled](InstanceV2ImplInternal *internal) {
+        internal->setIsNoiseSuppressionEnabled(enabled);
     });
 }
 

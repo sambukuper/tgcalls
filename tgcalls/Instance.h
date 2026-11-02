@@ -200,6 +200,8 @@ public:
     }
 
     virtual void setIsLowBatteryLevel(bool isLowBatteryLevel) = 0;
+    virtual void setIsNoiseSuppressionEnabled(bool enabled) {
+    }
 
 	virtual std::string getLastError() = 0;
 	virtual std::string getDebugInfo() = 0;
