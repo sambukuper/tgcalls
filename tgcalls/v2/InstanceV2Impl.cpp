@@ -262,8 +262,6 @@ private:
 
 private:
     std::shared_ptr<Threads> _threads;
-    rtc::scoped_refptr<webrtc::AudioProcessing> _audioProcessing;
-    bool _enableNoiseSuppression = true;
     uint32_t _ssrc = 0;
     webrtc::Call *_call = nullptr;
     ChannelManager *_channelManager = nullptr;
@@ -2233,6 +2231,8 @@ private:
     std::function<webrtc::scoped_refptr<WrappedAudioDeviceModule>(webrtc::TaskQueueFactory*)> _createWrappedAudioDeviceModule;
     MediaDevicesConfig _devicesConfig;
     FilePath _statsLogPath;
+    rtc::scoped_refptr<webrtc::AudioProcessing> _audioProcessing;
+    bool _enableNoiseSuppression = true;
     
     std::map<std::string, json11::Json> _customParameters;
 
